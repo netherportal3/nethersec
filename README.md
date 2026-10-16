@@ -22,12 +22,23 @@ repos where you are only a collaborator and cannot turn on Dependabot.
 ### Built to stay quiet
 
 - **No flood on day one.** The first scan of a repo records what is already open and posts one
-  summary. Only advisories that appear after that get their own alert.
+  summary. Only advisories that appear after that get their own alert. Malware is the exception:
+  it always gets its own alert.
 - **One card per advisory.** The same advisory in 12 repos is one card and at most one ping.
 - **At most 10 cards per scan.** Anything past that is listed in one summary message, never dropped.
-- **No false all-clear.** A repo that cannot be read keeps what was open there and is reported
-  after two scans in a row. If an advisory source is down, nothing is marked fixed until it is back.
-- **Acknowledge and mute** buttons on every card, and dev-only findings do not ping unless you ask.
+- **No false all-clear.** Nothing is marked fixed unless it was checked:
+  - A repo that cannot be read keeps what was open there, and is reported after two scans in a row.
+  - A lockfile that is too big or cannot be parsed, or a repo too big to list in full, keeps what
+    was open in it.
+  - If an advisory source is down, nothing in that ecosystem is marked fixed until it is back. If
+    it was down during a repo's first scan, the next scan records that backlog quietly instead of
+    alerting on all of it.
+- **Repos that come back still alert.** A repo that drops off the watch list is remembered for 30
+  days, so if it returns, its new advisories get alerts instead of being recorded quietly again.
+- **Acknowledge and mute** buttons on every card. Mute by advisory ID or by CVE. Dev-only findings
+  do not ping unless you ask.
+- **Safe restarts.** On shutdown the bot waits up to 45 seconds for a running scan to finish
+  posting and saving, so a restart does not post the same alerts twice.
 
 ## Supported lockfiles
 
@@ -90,6 +101,9 @@ With Docker:
 docker compose up -d --build
 ```
 
+The compose file gives the bot 60 seconds to stop, so a running scan can finish. With plain
+`docker run`, pass `--stop-timeout 60` for the same.
+
 Or with Node.js:
 
 ```bash
@@ -104,11 +118,14 @@ If the bot is not in your server yet, it prints an invite link when it starts. Y
 it yourself, with your Application ID:
 
 ```
-https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&scope=bot+applications.commands&permissions=268520464
+https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&scope=bot+applications.commands&permissions=378225642576
 ```
 
-The permissions are View Channels, Send Messages, Embed Links, Read Message History, Manage
-Channels and Manage Roles. The last two are only used by `/cve setup`.
+The permissions are View Channels, Send Messages, Embed Links and Read Message History for
+posting, plus Manage Channels, Manage Roles, Create Public Threads, Create Private Threads, Send
+Messages in Threads and Add Reactions for `/cve setup`. Discord only lets a bot set a channel
+permission it has itself, so setup needs the thread and reaction permissions to turn them off in
+the alert channels. The bot never starts threads or reacts.
 
 Then, in your server, run:
 
@@ -125,7 +142,9 @@ It creates a **CVE Monitor** category with three read-only channels and a **CVE 
 | `#cve-status` | The status board, newly watched repos, fixes and problems. |
 
 The channels are private by default: only admins and members with the **CVE Watch** role can see
-them. Run `/cve setup private:False` to let everyone in the server read them. Running setup again
+them. Run `/cve setup private:False` to let everyone in the server read them. Nobody can post in
+them; members with the CVE Watch role can open a thread on an alert and react, to talk it over.
+The role is mentionable, so the bot can ping it without extra permissions. Running setup again
 recreates anything that was deleted.
 
 The first scan starts right away. By default the bot watches every repo the token can read,
@@ -147,7 +166,7 @@ roles under Server Settings > Integrations.
 | `/cve repos remove <repo>` | Stop watching a repo. |
 | `/cve repos mode <mode>` | Watch every repo the token can read, or only the ones you add. |
 | `/cve settings` | Alert level, pings, forks, archived repos and scan interval. |
-| `/cve mute <advisory> [repo]` | Stop alerts for an advisory, everywhere or in one repo. |
+| `/cve mute <advisory> [repo]` | Stop alerts for an advisory (its GHSA or CVE ID), everywhere or in one repo. |
 | `/cve unmute <advisory> [repo]` | Turn them back on. |
 | `/cve mutes` | List muted advisories. |
 | `/cve pause` / `/cve resume` | Stop and restart scanning. |
@@ -184,6 +203,9 @@ See [SECURITY.md](SECURITY.md) to report a problem.
 A scan costs about one GitHub request per repo, plus one per changed lockfile. Repos whose default
 branch has not moved since the last scan answer from cache and do not count against GitHub's rate
 limit. If the limit runs low, the remaining repos wait for the next scan and keep what they had.
+
+The repo list is read up to 2000 repos. If the token can read more, the status board says so;
+switch to `/cve repos mode` "Only repos I add" and add the ones you want.
 
 ## Development
 

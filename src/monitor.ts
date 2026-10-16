@@ -8,8 +8,8 @@
  */
 import { randomBytes } from 'node:crypto'
 import type { Client, Message, SendableChannels } from 'discord.js'
-import { countOpen, planScan, severityAtLeast, type AlertGroup } from './planner.js'
-import { failureReason, type FetchLike, type GitHubClient } from './scanner/http.js'
+import { activeRepos, countOpen, planScan, severityAtLeast, type AlertGroup } from './planner.js'
+import { failureReason, MAX_REPO_PAGES, type FetchLike, type GitHubClient } from './scanner/http.js'
 import { resolveTargets, runScan, ScanCache, type RepoScan } from './scanner/scan.js'
 import { repoKey, type CardState, type RepoState, type RunSummary } from './state.js'
 import type { Store } from './store.js'
@@ -54,6 +54,7 @@ export class Monitor {
   knownRepos: string[] = []
   private timer: NodeJS.Timeout | null = null
   private stopped = false
+  private current: Promise<void> | null = null
   private dashboardQueue: Promise<void> = Promise.resolve()
   private readonly cache = new ScanCache()
   private readonly fetchImpl: FetchLike
@@ -103,9 +104,34 @@ export class Monitor {
   }
 
   /** One scan, then the next one is scheduled. Skips when one is already running. */
-  async run(): Promise<void> {
-    if (this.running) return
+  run(): Promise<void> {
+    if (this.running) return Promise.resolve()
     this.running = true
+    const current: Promise<void> = this.runOnce().finally(() => {
+      if (this.current === current) this.current = null
+    })
+    this.current = current
+    return current
+  }
+
+  /**
+   * Wait for the running scan to finish, at most `timeoutMs`. True when no scan
+   * is running anymore. Used on shutdown, so a scan that is posting saves what
+   * it posted and a restart does not post it again.
+   */
+  async whenIdle(timeoutMs: number): Promise<boolean> {
+    const current = this.current
+    if (!current) return true
+    let timer: NodeJS.Timeout | undefined
+    const timedOut = new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), timeoutMs)
+    })
+    const idle = await Promise.race([current.then(() => true as const, () => true as const), timedOut])
+    clearTimeout(timer)
+    return idle
+  }
+
+  private async runOnce(): Promise<void> {
     try {
       if (!this.state.setup) {
         log('Not set up yet. Run /cve setup in your server to start scanning.')
@@ -119,7 +145,7 @@ export class Monitor {
     } finally {
       this.running = false
       this.schedule()
-      await this.updateDashboard().catch(() => {})
+      if (!this.stopped) await this.updateDashboard().catch(() => {})
     }
   }
 
@@ -177,6 +203,12 @@ export class Monitor {
     this.knownRepos = targets.all.map((r) => r.fullName)
 
     const scan = await runScan({ github, fetchImpl: this.fetchImpl, cache: this.cache, targets: targets.targets })
+    // Stopping for a restart: post nothing and save nothing, so the next start
+    // runs this scan again instead of posting cards this one never recorded.
+    if (this.stopped) {
+      log('Stopping: this scan is dropped and runs again after the restart.')
+      return
+    }
     const unreadableTargets: RepoScan[] = targets.unreadable.map((u) => ({
       repo: u.repo,
       status: 'unreadable',
@@ -187,6 +219,19 @@ export class Monitor {
       findings: [],
     }))
     scan.repos.push(...unreadableTargets)
+    if (targets.listCapped) {
+      const max = MAX_REPO_PAGES * 100
+      log(`The GitHub token can read more than ${max} repos; only the first ${max} by name are watched.`)
+      scan.errors.push(`The GitHub token can read more than ${max} repos, so only the first ${max} by name are watched. Use /cve repos mode to watch only the ones you add.`)
+      // Repos past the end of the list are unknown this scan, not gone.
+      const seen = new Set(scan.repos.map((r) => repoKey(r.repo)))
+      const excluded = new Set(settings.exclude.map(repoKey))
+      for (const r of activeRepos(state.repos)) {
+        const k = repoKey(r.name)
+        if (seen.has(k) || excluded.has(k)) continue
+        scan.repos.push({ repo: r.name, status: 'not-reached', reason: 'Past the end of the repo list.', lockfiles: [], skipped: [], treeTruncated: false, findings: [] })
+      }
+    }
     if (targets.ssoPartial) scan.errors.push('Some organization repos are hidden because the token is not authorized for their SSO.')
     for (const r of scan.repos) if (r.treeTruncated) scan.errors.push(`${r.repo} is too big to list in full; some lockfiles may be missed.`)
 

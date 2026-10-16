@@ -14,7 +14,8 @@ export const GITHUB_API = 'https://api.github.com'
 export const USER_AGENT = 'discord-cve-monitor'
 const FETCH_TIMEOUT_MS = 20_000
 const BLOB_TIMEOUT_MS = 60_000
-const MAX_REPO_PAGES = 20
+/** 100 repos a page. */
+export const MAX_REPO_PAGES = 20
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
 const MAX_GITHUB_REDIRECTS = 3
 
@@ -216,8 +217,11 @@ export class GitHubClient {
     return { login: typeof body?.login === 'string' ? body.login : 'unknown', publicOnly }
   }
 
-  /** Every repo the token can read: owned, collaborator, and org member. */
-  async listRepos(): Promise<{ repos: RepoInfo[]; ssoPartial: boolean }> {
+  /**
+   * Every repo the token can read: owned, collaborator, and org member, up to
+   * MAX_REPO_PAGES pages. `capped` says the list stopped there with more to read.
+   */
+  async listRepos(): Promise<{ repos: RepoInfo[]; ssoPartial: boolean; capped: boolean }> {
     const out: RepoInfo[] = []
     let ssoPartial = false
     let next: string | null = '/user/repos?affiliation=owner,collaborator,organization_member&per_page=100&sort=full_name'
@@ -234,7 +238,7 @@ export class GitHubClient {
       }
       next = parseNextLink(res.headers.get('link'))
     }
-    return { repos: out, ssoPartial }
+    return { repos: out, ssoPartial, capped: next !== null }
   }
 
   async getRepo(fullName: string): Promise<RepoInfo> {

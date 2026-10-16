@@ -3,8 +3,10 @@ import {
   alertCard,
   baselineMessage,
   dashboardEmbed,
+  esc,
   findingsEmbed,
   fixText,
+  isSafeUrl,
   joinLines,
   updatedCardButtons,
   updatedCardEmbed,
@@ -57,7 +59,27 @@ describe('alertCard', () => {
     const members = [finding({ repo: 'me/app', advisoryId: 'GHSA-aaaa-bbbb-cccc', title: '@everyone **click** [here](https://evil.example)' })]
     const p = alertCard(group({ members, ping: false }), { cardId: 'abc', roleId: null, now: NOW })
     expect(p.embeds[0].description).not.toContain('**click**')
+    expect(p.embeds[0].description).toContain('\\[here\\](https://evil.example)')
     expect(p.allowedMentions.parse).toEqual([])
+    expect(esc('# Big\n- item\n1. first')).toBe('\\# Big\n\\- item\n1\\. first')
+  })
+
+  it('links an advisory only when its URL cannot break out of the link', () => {
+    const line = (url: string) => {
+      const repos = planScan({
+        scan: scanOf([okRepo('me/a', [finding({ repo: 'me/a', advisoryId: 'PYSEC-[1]', url })])]),
+        repos: {},
+        settings: settings(),
+        mutes: [],
+        now: NOW,
+      }).nextRepos
+      return findingsEmbed(repos, {}).description!
+    }
+    expect(line('https://osv.dev/vulnerability/PYSEC-1')).toContain('([PYSEC-\\[1\\]](https://osv.dev/vulnerability/PYSEC-1))')
+    expect(line('https://evil.example/a)(b')).toContain('(PYSEC-\\[1\\])')
+    expect(isSafeUrl('https://evil.example/a)(b')).toBe(false)
+    expect(isSafeUrl('http://example.com')).toBe(false)
+    expect(isSafeUrl('https://github.com/advisories/GHSA-aaaa-bbbb-cccc')).toBe(true)
   })
 
   it('lists every affected repo with its fix, within Discord limits', () => {
@@ -130,7 +152,7 @@ describe('summaries', () => {
       'high',
     )
     const d = p.embeds[0].description!
-    expect(d).toContain('Started watching 2 repos. 1 of them have open advisories.')
+    expect(d).toContain('Recorded what is already open in 2 repos. 1 of them has open advisories.')
     expect(d).toContain('Critical 1 · High 0 · Moderate 0 · Low 1')
     expect(d).toContain('GHSA-1')
     expect(d).not.toContain('GHSA-2')
@@ -153,5 +175,20 @@ describe('summaries', () => {
     const board = dashboardEmbed(state, { nextRunAt: NOW, running: false })
     expect(board.fields![0]).toEqual({ name: 'Open advisories', value: 'Critical 0 · High 1 · Moderate 0 · Low 1' })
     expect(board.fields!.find((f) => f.name === 'Next scan')!.value).toMatch(/^<t:\d+:R>$/)
+  })
+
+  it('repos no longer watched drop off the findings and the status board', () => {
+    const repos = planScan({
+      scan: scanOf([okRepo('me/a', [finding({ repo: 'me/a', advisoryId: 'GHSA-1', severity: 'high' })])]),
+      repos: {},
+      settings: settings(),
+      mutes: [],
+      now: NOW,
+    }).nextRepos
+    repos['me/a'].droppedAt = NOW
+    expect(findingsEmbed(repos, {}).description).toBe('Nothing open.')
+    const board = dashboardEmbed({ ...emptyState(60), repos }, { nextRunAt: NOW, running: false })
+    expect(board.fields![0].value).toBe('Critical 0 · High 0 · Moderate 0 · Low 0')
+    expect(board.fields![1].value).toMatch(/^0 repos/)
   })
 })

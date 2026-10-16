@@ -13,8 +13,13 @@ const OSV_VULN_URL = 'https://api.osv.dev/v1/vulns/'
 const NPM_BULK_CHUNK = 400
 /** Queries per OSV batch request (the API allows 1000). */
 const OSV_BATCH_CHUNK = 500
-/** Most OSV records fetched in one run; malware reports are fetched first. */
-const OSV_DETAIL_CAP = 300
+/**
+ * Most OSV records fetched in one run. Past it the lookup THROWS rather than
+ * leave some out: a left-out advisory would read as fixed.
+ */
+export const OSV_DETAIL_CAP = 1000
+/** Most follow-up pages for one batch (OSV pages a query with many matches). */
+const OSV_MAX_PAGES = 10
 const CONCURRENCY = 4
 
 /** npm bulk lookup for every installed name and version. */
@@ -39,26 +44,43 @@ export async function fetchOsvAdvisories(
   // vuln id -> package -> versions
   const hits = new Map<string, Map<string, Set<string>>>()
   for (let i = 0; i < pins.length; i += OSV_BATCH_CHUNK) {
-    const chunk = pins.slice(i, i + OSV_BATCH_CHUNK)
-    const body: any = await postJson(fetchImpl, OSV_BATCH_URL, {
-      queries: chunk.map((p) => ({ package: { name: p.name, ecosystem: 'PyPI' }, version: p.version })),
-    })
-    const results = Array.isArray(body?.results) ? body.results : null
-    if (!results) throw new SourceError('bad-body', 'OSV returned an unexpected shape.')
-    chunk.forEach((p, idx) => {
-      for (const v of Array.isArray(results[idx]?.vulns) ? results[idx].vulns : []) {
-        if (typeof v?.id !== 'string') continue
-        let byPkg = hits.get(v.id)
-        if (!byPkg) hits.set(v.id, (byPkg = new Map()))
-        let versions = byPkg.get(p.name)
-        if (!versions) byPkg.set(p.name, (versions = new Set()))
-        versions.add(p.version)
-      }
-    })
+    // A query whose result carries next_page_token has more matches: it is sent
+    // again with that token until none is left.
+    let queries = pins.slice(i, i + OSV_BATCH_CHUNK).map((pin) => ({ pin, pageToken: undefined as string | undefined }))
+    for (let page = 0; queries.length > 0; page++) {
+      if (page >= OSV_MAX_PAGES) throw new SourceError('bad-body', 'OSV kept returning more pages than one scan reads.')
+      const body: any = await postJson(fetchImpl, OSV_BATCH_URL, {
+        queries: queries.map(({ pin, pageToken }) => ({
+          package: { name: pin.name, ecosystem: 'PyPI' },
+          version: pin.version,
+          ...(pageToken ? { page_token: pageToken } : {}),
+        })),
+      })
+      const results = Array.isArray(body?.results) ? body.results : null
+      // One result per query, in order. A short list would leave packages unchecked.
+      if (!results || results.length !== queries.length) throw new SourceError('bad-body', 'OSV returned an unexpected shape.')
+      const more: typeof queries = []
+      queries.forEach(({ pin }, idx) => {
+        const result = results[idx]
+        for (const v of Array.isArray(result?.vulns) ? result.vulns : []) {
+          if (typeof v?.id !== 'string') continue
+          let byPkg = hits.get(v.id)
+          if (!byPkg) hits.set(v.id, (byPkg = new Map()))
+          let versions = byPkg.get(pin.name)
+          if (!versions) byPkg.set(pin.name, (versions = new Set()))
+          versions.add(pin.version)
+        }
+        if (typeof result?.next_page_token === 'string' && result.next_page_token) {
+          more.push({ pin, pageToken: result.next_page_token })
+        }
+      })
+      queries = more
+    }
   }
-  // Malicious-package reports first, so the cap never drops one.
-  const isMal = (id: string) => (/^MAL-/i.test(id) ? 0 : 1)
-  const ids = [...hits.keys()].sort((a, b) => isMal(a) - isMal(b) || (a < b ? -1 : a > b ? 1 : 0)).slice(0, OSV_DETAIL_CAP)
+  if (hits.size > OSV_DETAIL_CAP) {
+    throw new SourceError('bad-body', `OSV matched more than ${OSV_DETAIL_CAP} advisories, more than one scan reads.`)
+  }
+  const ids = [...hits.keys()].sort()
   const records = await mapLimit(ids, CONCURRENCY, async (id) => ({
     id,
     record: await getJson(fetchImpl, OSV_VULN_URL + encodeURIComponent(id)),

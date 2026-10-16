@@ -23,28 +23,49 @@ const CHANNELS = {
   status: { name: 'cve-status', topic: 'Scan status, newly watched repos, fixes and problems.' },
 } as const
 
+/**
+ * Threads and reactions are separate from Send Messages, so the channels deny
+ * them too. The bot must hold a permission to set it on a channel.
+ */
+const THREADS_AND_REACTIONS = [
+  PermissionFlagsBits.CreatePublicThreads,
+  PermissionFlagsBits.CreatePrivateThreads,
+  PermissionFlagsBits.SendMessagesInThreads,
+  PermissionFlagsBits.AddReactions,
+]
+
 /** The permissions the bot needs in the server, for the invite link. */
-export const BOT_PERMISSIONS =
-  PermissionFlagsBits.ViewChannel |
-  PermissionFlagsBits.SendMessages |
-  PermissionFlagsBits.EmbedLinks |
-  PermissionFlagsBits.ReadMessageHistory |
-  PermissionFlagsBits.ManageChannels |
-  PermissionFlagsBits.ManageRoles
+export const BOT_PERMISSIONS = [
+  PermissionFlagsBits.ViewChannel,
+  PermissionFlagsBits.SendMessages,
+  PermissionFlagsBits.EmbedLinks,
+  PermissionFlagsBits.ReadMessageHistory,
+  PermissionFlagsBits.ManageChannels,
+  PermissionFlagsBits.ManageRoles,
+  ...THREADS_AND_REACTIONS,
+].reduce((all, p) => all | p, 0n)
 
 /**
- * Read-only for everyone. Private: hidden from everyone but the watcher role,
- * admins and the bot. Only permissions the bot itself holds are used, since
- * Discord refuses an overwrite that grants more than the bot has.
+ * Read-only for everyone: no messages, threads or reactions. The watcher role
+ * can open a thread on an alert and react, to talk it over. Private: hidden
+ * from everyone but the watcher role, admins and the bot. Only permissions the
+ * bot itself holds are used, since Discord refuses an overwrite that grants
+ * more than the bot has.
  */
 export function overwritesFor(guild: Guild, roleId: string, botId: string, isPrivate: boolean): OverwriteResolvable[] {
-  const everyoneDeny = [PermissionFlagsBits.SendMessages]
+  const everyoneDeny = [PermissionFlagsBits.SendMessages, ...THREADS_AND_REACTIONS]
   if (isPrivate) everyoneDeny.push(PermissionFlagsBits.ViewChannel)
   return [
     { id: guild.roles.everyone.id, deny: everyoneDeny },
     {
       id: roleId,
-      allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
+      allow: [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.ReadMessageHistory,
+        PermissionFlagsBits.CreatePublicThreads,
+        PermissionFlagsBits.SendMessagesInThreads,
+        PermissionFlagsBits.AddReactions,
+      ],
       deny: [PermissionFlagsBits.SendMessages],
     },
     {
@@ -70,6 +91,10 @@ export function missingSetupPermissions(guild: Guild): string[] {
     [PermissionFlagsBits.SendMessages, 'Send Messages'],
     [PermissionFlagsBits.EmbedLinks, 'Embed Links'],
     [PermissionFlagsBits.ReadMessageHistory, 'Read Message History'],
+    [PermissionFlagsBits.CreatePublicThreads, 'Create Public Threads'],
+    [PermissionFlagsBits.CreatePrivateThreads, 'Create Private Threads'],
+    [PermissionFlagsBits.SendMessagesInThreads, 'Send Messages in Threads'],
+    [PermissionFlagsBits.AddReactions, 'Add Reactions'],
   ]
   return names.filter(([flag]) => !me.permissions.has(flag)).map(([, name]) => name)
 }

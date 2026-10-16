@@ -47,6 +47,7 @@ function fakeDiscord() {
 /** GitHub + npm, with the advisories the npm endpoint returns set per scan. */
 function fakeSources() {
   let advisories: Record<string, unknown[]> = {}
+  let onLookup: (() => void) | null = null
   const lock = JSON.stringify({ lockfileVersion: 3, packages: { 'node_modules/lodash': { version: '4.17.20' }, 'node_modules/minimist': { version: '1.2.0' } } })
   const json = (body: unknown, headers: Record<string, string> = {}) => new Response(JSON.stringify(body), { status: 200, headers: { 'x-ratelimit-remaining': '4000', ...headers } })
   const impl = async (url: string, init?: RequestInit): Promise<Response> => {
@@ -55,10 +56,18 @@ function fakeSources() {
     if (u.pathname === '/user/repos') return json([{ full_name: 'me/app', default_branch: 'main' }])
     if (u.pathname === '/repos/me/app/git/trees/main') return json({ tree: [{ path: 'package-lock.json', type: 'blob', sha: 'b1', size: lock.length }] })
     if (u.pathname === '/repos/me/app/git/blobs/b1') return new Response(lock, { status: 200 })
-    if (u.pathname.endsWith('/advisories/bulk') && init?.method === 'POST') return json(advisories)
+    if (u.pathname.endsWith('/advisories/bulk') && init?.method === 'POST') {
+      onLookup?.()
+      return json(advisories)
+    }
     return new Response('{}', { status: 404 })
   }
-  return { impl, set: (a: Record<string, unknown[]>) => (advisories = a) }
+  return {
+    impl,
+    set: (a: Record<string, unknown[]>) => (advisories = a),
+    /** Run `fn` while the scan looks up advisories, before anything is posted. */
+    duringLookup: (fn: (() => void) | null) => (onLookup = fn),
+  }
 }
 
 const LODASH = { id: 1, url: 'https://github.com/advisories/GHSA-35jh-r3h4-6jhm', title: 'Command Injection in lodash', severity: 'high', vulnerable_versions: '<4.17.21' }
@@ -132,6 +141,56 @@ describe('Monitor', () => {
     discord.failing.clear()
     await monitor.run()
     expect(titles(discord.sent)).toEqual(['crit: Critical: minimist (GHSA-xvch-5gv4-984h)'])
+  })
+
+  it('a stop before posting drops the scan, so the restart posts each card once', async () => {
+    const { discord, sources, store, monitor } = await setupMonitor()
+    sources.set({})
+    await monitor.run()
+    const before = JSON.stringify(store.state.repos)
+    const lastRun = store.state.lastRun
+
+    discord.sent.length = 0
+    sources.set({ minimist: [MINIMIST] })
+    sources.duringLookup(() => monitor.stop())
+    const run = monitor.run()
+    expect(await monitor.whenIdle(5_000)).toBe(true)
+    await run
+    expect(discord.sent).toEqual([])
+    expect(JSON.stringify(store.state.repos)).toBe(before)
+    expect(store.state.lastRun).toBe(lastRun)
+
+    // The restart: a new process on the same saved state.
+    sources.duringLookup(null)
+    const github = new GitHubClient({ token: 'test-token', fetchImpl: sources.impl })
+    const restarted = new Monitor({ client: discord.client, store, github, fetchImpl: sources.impl })
+    monitors.push(restarted)
+    await restarted.run()
+    await restarted.run()
+    expect(titles(discord.sent)).toEqual(['crit: Critical: minimist (GHSA-xvch-5gv4-984h)'])
+  })
+
+  it('whenIdle waits for a running scan, and gives up after the timeout', async () => {
+    const { discord, sources, store, monitor } = await setupMonitor()
+    expect(await monitor.whenIdle(10)).toBe(true)
+    let release!: () => void
+    const held = new Promise<void>((resolve) => (release = resolve))
+    // The advisory lookup hangs until released.
+    const slow = new Monitor({
+      client: discord.client,
+      store,
+      github: new GitHubClient({ token: 'test-token', fetchImpl: sources.impl }),
+      fetchImpl: async (url, init) => {
+        if (url.includes('/advisories/bulk')) await held
+        return sources.impl(url, init)
+      },
+    })
+    monitors.push(slow)
+    const run = slow.run()
+    expect(await slow.whenIdle(20)).toBe(false)
+    release()
+    expect(await slow.whenIdle(5_000)).toBe(true)
+    await run
   })
 
   it('does nothing until set up, and nothing while paused', async () => {

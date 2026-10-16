@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { GitHubClient, readTextUpTo } from '../src/scanner/http.js'
+import { GitHubClient, MAX_REPO_PAGES, readTextUpTo } from '../src/scanner/http.js'
 import { filterRepos, resolveTargets, runScan, ScanCache } from '../src/scanner/scan.js'
 import type { RepoInfo } from '../src/scanner/http.js'
 
@@ -136,6 +136,23 @@ describe('repo selection', () => {
     const t = await resolveTargets(github, { ...base, mode: 'list', repos: ['me/app', 'me/nope'] })
     expect(t.targets.map((r) => r.fullName)).toEqual(['me/app'])
     expect(t.unreadable).toEqual([{ repo: 'me/nope', reason: 'GitHub returned 404 (no access, or the repo was renamed or deleted).' }])
+  })
+
+  it('says when the repo list stopped at its page limit with more to read', async () => {
+    const page = (n: number, more: boolean) =>
+      new Response(JSON.stringify([{ full_name: `me/r${n}`, default_branch: 'main' }]), {
+        status: 200,
+        headers: more ? { link: `<https://api.github.com/user/repos?page=${n + 1}>; rel="next"` } : {},
+      })
+    const listing = (pages: number) => async (url: string) => {
+      const n = Number(new URL(url).searchParams.get('page') ?? '1')
+      return page(n, n < pages)
+    }
+    const small = await new GitHubClient({ token: TOKEN, fetchImpl: listing(3) }).listRepos()
+    expect([small.repos.length, small.capped]).toEqual([3, false])
+    const huge = await new GitHubClient({ token: TOKEN, fetchImpl: listing(50) }).listRepos()
+    expect([huge.repos.length, huge.capped]).toEqual([MAX_REPO_PAGES, true])
+    expect((await resolveTargets(new GitHubClient({ token: TOKEN, fetchImpl: listing(50) }), { ...base, exclude: [] })).listCapped).toBe(true)
   })
 })
 

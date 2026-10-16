@@ -97,13 +97,22 @@ export function filterRepos(all: RepoInfo[], sel: RepoSelection): RepoInfo[] {
 export async function resolveTargets(
   github: GitHubClient,
   sel: RepoSelection,
-): Promise<{ targets: RepoInfo[]; unreadable: Array<{ repo: string; reason: string }>; ssoPartial: boolean; all: RepoInfo[] }> {
+): Promise<{
+  targets: RepoInfo[]
+  unreadable: Array<{ repo: string; reason: string }>
+  ssoPartial: boolean
+  /** The token can read more repos than the listing reads. */
+  listCapped: boolean
+  all: RepoInfo[]
+}> {
   let listed: RepoInfo[] = []
   let ssoPartial = false
+  let listCapped = false
   if (sel.mode === 'all') {
     const res = await github.listRepos()
     listed = res.repos
     ssoPartial = res.ssoPartial
+    listCapped = res.capped
   }
   const have = new Set(listed.map((r) => r.fullName.toLowerCase()))
   const extra = sel.repos.filter((r) => !have.has(r.toLowerCase()))
@@ -120,7 +129,7 @@ export async function resolveTargets(
   const fromListing = sel.mode === 'all' ? filterRepos(listed, sel) : []
   const seen = new Set(fromListing.map((r) => r.fullName.toLowerCase()))
   const targets = [...fromListing, ...chosen.filter((r) => !seen.has(r.fullName.toLowerCase()))]
-  return { targets, unreadable, ssoPartial, all: listed }
+  return { targets, unreadable, ssoPartial, listCapped, all: listed }
 }
 
 async function scanRepo(github: GitHubClient, cache: ScanCache, repo: RepoInfo, used: Set<string>): Promise<RepoScan & { parsed: ParsedLockfile[] }> {

@@ -84,7 +84,7 @@ export const cveCommand = new SlashCommandBuilder()
     s
       .setName('mute')
       .setDescription('Stop alerts for an advisory')
-      .addStringOption((o) => o.setName('advisory').setDescription('The advisory ID, like GHSA-xxxx-xxxx-xxxx').setRequired(true))
+      .addStringOption((o) => o.setName('advisory').setDescription('The advisory or CVE ID, like GHSA-xxxx-xxxx-xxxx').setRequired(true))
       .addStringOption((o) => o.setName('repo').setDescription('Only in this repo (default: every repo)').setAutocomplete(true)),
   )
   .addSubcommand((s) =>

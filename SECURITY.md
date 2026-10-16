@@ -16,3 +16,5 @@ on this repository's **Security** tab. You will get a reply within a few days.
   can read your repos' advisories through it.
 - Lockfiles are treated as untrusted input: size limits, a cap on files per repo, and parsers that
   stay fast on hostile input.
+- Text from advisories and repos is escaped before it is posted, so it cannot format a message,
+  hide a link or ping anyone. The only mention the bot ever sends is the CVE Watch role.

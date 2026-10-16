@@ -20,3 +20,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
+    ignore:
+      # The image stays on a long-term support line of Node; moving to the next one is done by hand.
+      - dependency-name: node
+        update-types: ['version-update:semver-major']

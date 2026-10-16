@@ -10,7 +10,7 @@ import { ButtonStyle, ComponentType, escapeMarkdown, type APIEmbed, type APIActi
 import { SEVERITIES, SOURCE_LABEL, type Severity } from '../scanner/advisories.js'
 import type { FixLine } from '../scanner/fix.js'
 import type { Finding } from '../scanner/match.js'
-import type { AlertGroup, FixedItem } from '../planner.js'
+import { activeRepos, type AlertGroup, type FixedItem } from '../planner.js'
 import type { CardState, FindingState, RepoState, State } from '../state.js'
 
 export const COLORS: Record<Severity | 'fixed' | 'info' | 'warn', number> = {
@@ -66,13 +66,24 @@ export function joinLines(lines: string[], max: number): string {
   return out
 }
 
-function esc(s: string): string {
-  return escapeMarkdown(s)
+/**
+ * Outside text, shown as typed: no formatting, headings, lists or masked links.
+ * Clipped first, since escapeMarkdown slows down on very long hostile input and
+ * nothing shown is this long. Brackets are escaped here because the library's
+ * own masked-link check is slow on hostile input too.
+ */
+export function esc(s: string): string {
+  return escapeMarkdown(clip(s, 1000), { heading: true, bulletedList: true, numberedList: true }).replace(/[[\]]/g, '\\$&')
 }
 
-/** The advisory id, linked when its URL is https. */
+/** An https URL with nothing that could end a markdown link early. */
+export function isSafeUrl(url: string | undefined): url is string {
+  return !!url && /^https:\/\/[^\s()<>[\]]+$/.test(url) && url.length <= 512
+}
+
+/** The advisory id, linked when its URL is safe to link. */
 function advLink(id: string, url: string): string {
-  return /^https:\/\//.test(url) ? `[${id}](${url})` : id
+  return isSafeUrl(url) ? `[${esc(id)}](${url})` : esc(id)
 }
 
 function unix(iso: string): number {
@@ -98,7 +109,7 @@ function findingLine(f: Pick<Finding, 'repo' | 'fixes' | 'installed' | 'lockfile
 
 function advisoryButtons(url: string, cardId: string): APIActionRowComponent<APIButtonComponent>[] {
   const row: APIButtonComponent[] = []
-  if (/^https:\/\//.test(url)) row.push({ type: ComponentType.Button, style: ButtonStyle.Link, label: 'View advisory', url })
+  if (isSafeUrl(url)) row.push({ type: ComponentType.Button, style: ButtonStyle.Link, label: 'View advisory', url })
   row.push({ type: ComponentType.Button, style: ButtonStyle.Secondary, label: 'Acknowledge', custom_id: ACK_PREFIX + cardId })
   row.push({ type: ComponentType.Button, style: ButtonStyle.Secondary, label: 'Mute advisory', custom_id: MUTE_PREFIX + cardId })
   return [{ type: ComponentType.ActionRow, components: row }]
@@ -126,7 +137,7 @@ export function alertCard(g: AlertGroup, opts: { cardId: string; roleId: string 
   const sources = [...new Set(g.members.flatMap((m) => m.sources))].map((s) => SOURCE_LABEL[s]).join(', ')
   const embed: APIEmbed = {
     title,
-    url: /^https:\/\//.test(lead.url) ? lead.url : undefined,
+    url: isSafeUrl(lead.url) ? lead.url : undefined,
     description: clip(description, 4096),
     color: g.malware ? COLORS.critical : COLORS[g.severity],
     fields,
@@ -163,7 +174,7 @@ export function updatedCardEmbed(embed: APIEmbed, card: CardState): APIEmbed {
 /** Buttons after a change: none once fixed; Acknowledge and Mute go once used. */
 export function updatedCardButtons(url: string | undefined, card: CardState): APIActionRowComponent<APIButtonComponent>[] {
   const row: APIButtonComponent[] = []
-  if (url && /^https:\/\//.test(url)) row.push({ type: ComponentType.Button, style: ButtonStyle.Link, label: 'View advisory', url })
+  if (isSafeUrl(url)) row.push({ type: ComponentType.Button, style: ButtonStyle.Link, label: 'View advisory', url })
   if (!card.resolvedAt) {
     if (!card.ackedBy) row.push({ type: ComponentType.Button, style: ButtonStyle.Secondary, label: 'Acknowledge', custom_id: ACK_PREFIX + card.id })
     if (!card.mutedBy) row.push({ type: ComponentType.Button, style: ButtonStyle.Secondary, label: 'Mute advisory', custom_id: MUTE_PREFIX + card.id })
@@ -185,17 +196,25 @@ function severityOrder(a: { severity: Severity }, b: { severity: Severity }): nu
   return SEVERITIES.indexOf(a.severity) - SEVERITIES.indexOf(b.severity)
 }
 
-/** One message for every repo read for the first time this scan. */
+/**
+ * One message for every repo (or ecosystem of a repo) read for the first time
+ * this scan. An ecosystem whose source was down at a repo's first read lands
+ * here later, so the wording fits a repo already watched too.
+ */
 export function baselineMessage(baselined: Array<{ repo: string; findings: Finding[] }>, minSeverity: Severity): Payload {
   const all = baselined.flatMap((b) => b.findings)
   const top = all
     .filter((f) => SEVERITIES.indexOf(f.severity) <= SEVERITIES.indexOf(minSeverity) || f.malware)
     .sort(severityOrder)
     .map((f) => `**${SEVERITY_LABEL[f.severity]}** ${esc(f.packageName)} ${f.fixes.map(fixText).join(', ')} in **${esc(f.repo)}** (${advLink(f.advisoryId, f.url)})`)
+  const n = baselined.length
   const withFindings = baselined.filter((b) => b.findings.length > 0).length
-  const repoWord = baselined.length === 1 ? 'repo' : 'repos'
+  const which =
+    n === 1
+      ? withFindings ? 'It has open advisories.' : 'Nothing is open there.'
+      : `${withFindings} of them ${withFindings === 1 ? 'has' : 'have'} open advisories.`
   const lines = [
-    `Started watching ${baselined.length} ${repoWord}. ${withFindings} of them have open advisories.`,
+    `Recorded what is already open in ${n} ${n === 1 ? 'repo' : 'repos'}. ${which}`,
     '',
     `**Open now:** ${countsText(countBySeverity(all))}`,
   ]
@@ -228,7 +247,7 @@ export function overflowMessage(groups: AlertGroup[]): Payload {
 export function fixedMessage(items: FixedItem[]): Payload {
   const lines = [...items]
     .sort((a, b) => severityOrder(a.finding, b.finding))
-    .map((i) => `**${SEVERITY_LABEL[i.finding.severity]}** ${esc(i.finding.packageName)} (${i.finding.advisoryId}) in **${esc(i.repo)}**`)
+    .map((i) => `**${SEVERITY_LABEL[i.finding.severity]}** ${esc(i.finding.packageName)} (${esc(i.finding.advisoryId)}) in **${esc(i.repo)}**`)
   return {
     embeds: [{ title: 'Fixed since the last scan', description: joinLines(lines, 4000), color: COLORS.fixed }],
     allowedMentions: NO_MENTIONS,
@@ -265,7 +284,7 @@ export function findingsEmbed(repos: Record<string, RepoState>, filter: { repo?:
   const want = filter.repo?.toLowerCase()
   const min = filter.minSeverity ? SEVERITIES.indexOf(filter.minSeverity) : SEVERITIES.length - 1
   const rows: Array<{ severity: Severity; line: string }> = []
-  for (const r of Object.values(repos)) {
+  for (const r of activeRepos(repos)) {
     if (want && r.name.toLowerCase() !== want) continue
     for (const f of Object.values(r.findings)) {
       if (SEVERITIES.indexOf(f.severity) > min && !f.malware) continue
@@ -273,12 +292,12 @@ export function findingsEmbed(repos: Record<string, RepoState>, filter: { repo?:
     }
   }
   rows.sort((a, b) => severityOrder(a, b) || a.line.localeCompare(b.line))
-  const scope = filter.repo ? ` in ${esc(filter.repo)}` : ''
+  const scope = filter.repo ? ` in ${clip(esc(filter.repo), 200)}` : ''
   if (rows.length === 0) {
     return { title: `Open advisories${scope}`, description: 'Nothing open.', color: COLORS.fixed }
   }
   return {
-    title: `Open advisories${scope} (${rows.length})`,
+    title: clip(`Open advisories${scope} (${rows.length})`, 256),
     description: joinLines(rows.map((r) => r.line), 4000),
     color: COLORS[rows[0].severity],
   }
@@ -286,7 +305,7 @@ export function findingsEmbed(repos: Record<string, RepoState>, filter: { repo?:
 
 /** The status board in the status channel, edited after every scan. */
 export function dashboardEmbed(state: State, opts: { nextRunAt: string | null; running: boolean; githubLogin?: string }): APIEmbed {
-  const repos = Object.values(state.repos)
+  const repos = activeRepos(state.repos)
   const counts: Record<Severity, number> = { critical: 0, high: 0, moderate: 0, low: 0 }
   for (const r of repos) for (const f of Object.values(r.findings)) counts[f.severity]++
   const s = state.settings

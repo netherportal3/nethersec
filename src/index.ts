@@ -12,6 +12,9 @@ import { Monitor } from './monitor.js'
 import { GitHubClient } from './scanner/http.js'
 import { Store } from './store.js'
 
+/** How long shutdown waits for a running scan. Keep it under the container's stop timeout. */
+const SHUTDOWN_WAIT_MS = 45_000
+
 async function main(): Promise<void> {
   const config = loadConfig()
   const store = await Store.open(config.dataDir, config.intervalMinutes)
@@ -63,9 +66,17 @@ async function main(): Promise<void> {
 
   client.on(Events.Error, (err) => log(`Discord client error: ${err.name}`))
 
+  let shuttingDown = false
   const shutdown = async (signal: string) => {
+    if (shuttingDown) return
+    shuttingDown = true
     log(`${signal} received, shutting down.`)
     monitor.stop()
+    // A scan that is posting alerts finishes and saves first, so the restart
+    // does not post them again.
+    if (!(await monitor.whenIdle(SHUTDOWN_WAIT_MS))) {
+      log('The running scan did not finish in time. Some alerts may post again after the restart.')
+    }
     await store.save().catch(() => {})
     await client.destroy()
     process.exit(0)

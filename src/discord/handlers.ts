@@ -16,6 +16,7 @@ import { failureReason, type GitHubClient } from '../scanner/http.js'
 import { MAX_INTERVAL_MINUTES, MIN_INTERVAL_MINUTES } from '../config.js'
 import { repoKey, type Settings } from '../state.js'
 import type { Monitor } from '../monitor.js'
+import { activeRepos } from '../planner.js'
 import { log } from '../log.js'
 import {
   ACK_PREFIX,
@@ -71,6 +72,14 @@ function say(interaction: ChatInputCommandInteraction, content: string) {
   return interaction.reply({ content, flags: EPHEMERAL, allowedMentions: NO_MENTIONS })
 }
 
+/**
+ * Refresh the status board without waiting for it. Discord drops a reply that
+ * comes later than 3 seconds, and the board edit can be slow.
+ */
+function refreshBoard(monitor: Monitor): void {
+  monitor.updateDashboard().catch(() => {})
+}
+
 function normalizeRepo(raw: string | null): string | null {
   const v = (raw ?? '').trim().replace(/^https:\/\/github\.com\//i, '').replace(/\.git$/i, '').replace(/\/+$/, '')
   return REPO_RE.test(v) ? v : null
@@ -122,7 +131,7 @@ async function command(deps: HandlerDeps, interaction: ChatInputCommandInteracti
         return
       }
       await monitor.save()
-      await monitor.updateDashboard()
+      refreshBoard(monitor)
       const s = state.setup
       const lines = [
         `Done. Critical alerts go to <#${s.criticalChannelId}>, other alerts to <#${s.alertsChannelId}>, and scan status to <#${s.statusChannelId}>.`,
@@ -161,10 +170,13 @@ async function command(deps: HandlerDeps, interaction: ChatInputCommandInteracti
     }
 
     case 'findings': {
-      if (Object.keys(state.repos).length === 0) return void (await say(interaction, 'Nothing has been scanned yet.'))
-      const repo = interaction.options.getString('repo') ?? undefined
-      const severity = (interaction.options.getString('severity') ?? undefined) as Severity | undefined
-      const embed = findingsEmbed(state.repos, { repo, minSeverity: severity })
+      if (activeRepos(state.repos).length === 0) return void (await say(interaction, 'Nothing has been scanned yet.'))
+      const repoRaw = interaction.options.getString('repo')
+      const repo = repoRaw ? normalizeRepo(repoRaw) : null
+      if (repoRaw && !repo) return void (await say(interaction, 'Give the repo as owner/name.'))
+      const severityRaw = interaction.options.getString('severity')
+      const severity = severityRaw && (SEVERITIES as string[]).includes(severityRaw) ? (severityRaw as Severity) : undefined
+      const embed = findingsEmbed(state.repos, { repo: repo ?? undefined, minSeverity: severity })
       await interaction.reply({ embeds: [embed], flags: EPHEMERAL, allowedMentions: NO_MENTIONS })
       return
     }
@@ -206,11 +218,9 @@ async function command(deps: HandlerDeps, interaction: ChatInputCommandInteracti
         changed = true
         if (!monitor.running) monitor.schedule()
       }
-      if (changed) {
-        await monitor.save()
-        await monitor.updateDashboard()
-      }
+      if (changed) await monitor.save()
       await say(interaction, `${changed ? 'Saved.\n\n' : ''}${settingsText(s)}`)
+      if (changed) refreshBoard(monitor)
       return
     }
 
@@ -260,8 +270,8 @@ async function command(deps: HandlerDeps, interaction: ChatInputCommandInteracti
     case 'pause': {
       state.settings.paused = true
       await monitor.save()
-      await monitor.updateDashboard()
       await say(interaction, 'Paused. No scans run until `/cve resume`.')
+      refreshBoard(monitor)
       return
     }
 
@@ -269,8 +279,8 @@ async function command(deps: HandlerDeps, interaction: ChatInputCommandInteracti
       state.settings.paused = false
       await monitor.save()
       if (!monitor.running) monitor.schedule(5_000)
-      await monitor.updateDashboard()
       await say(interaction, 'Resumed. The next scan starts in a few seconds.')
+      refreshBoard(monitor)
       return
     }
   }
@@ -282,7 +292,7 @@ async function reposCommand(deps: HandlerDeps, interaction: ChatInputCommandInte
 
   switch (sub) {
     case 'list': {
-      const watched = Object.values(monitor.state.repos)
+      const watched = activeRepos(monitor.state.repos)
         .map((r) => r.name)
         .sort((a, b) => a.localeCompare(b))
       const lines = [
@@ -339,7 +349,7 @@ async function reposCommand(deps: HandlerDeps, interaction: ChatInputCommandInte
       const mode = interaction.options.getString('mode', true) === 'list' ? 'list' : 'all'
       s.repoMode = mode
       await monitor.save()
-      await monitor.updateDashboard()
+      refreshBoard(monitor)
       if (mode === 'all') {
         await say(interaction, 'Now watching every repo the GitHub token can read (plus any you added by name). Use `/cve repos remove` to leave one out.')
       } else {
@@ -423,11 +433,12 @@ async function autocomplete(deps: HandlerDeps, interaction: AutocompleteInteract
   const { monitor } = deps
   const typed = interaction.options.getFocused().toLowerCase()
   const names = new Map<string, string>()
-  for (const r of Object.values(monitor.state.repos)) names.set(repoKey(r.name), r.name)
+  for (const r of activeRepos(monitor.state.repos)) names.set(repoKey(r.name), r.name)
   for (const r of monitor.state.settings.repos) names.set(repoKey(r), r)
   for (const r of monitor.knownRepos) if (!names.has(repoKey(r))) names.set(repoKey(r), r)
   const matches = [...names.values()]
-    .filter((n) => n.toLowerCase().includes(typed))
+    // Discord refuses the whole list if one choice is over 100 characters.
+    .filter((n) => n.length <= 100 && n.toLowerCase().includes(typed))
     .sort((a, b) => a.localeCompare(b))
     .slice(0, 25)
   await interaction.respond(matches.map((n) => ({ name: n, value: n })))
