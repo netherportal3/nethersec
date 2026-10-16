@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CARD_CAP, countOpen, planScan, shouldPing } from '../src/planner.js'
+import { activeRepos, CARD_CAP, countOpen, DROPPED_TTL_MS, planScan, shouldPing } from '../src/planner.js'
 import type { RepoState } from '../src/state.js'
 import { finding, okRepo, scanOf, settings } from './helpers.js'
 
@@ -21,8 +21,47 @@ describe('baseline', () => {
     })
     expect(plan.alerts).toEqual([])
     expect(plan.baselined.map((b) => b.repo)).toEqual(['me/a', 'me/b'])
-    expect(plan.nextRepos['me/a'].baselined).toBe(true)
+    expect(plan.nextRepos['me/a'].baselined).toEqual({ npm: true, PyPI: true })
     expect(Object.keys(plan.nextRepos['me/a'].findings)).toEqual(['GHSA-1:pkg'])
+  })
+
+  it('malware still gets a card during a baseline, unless muted', () => {
+    const plan = planScan({
+      scan: scanOf([
+        okRepo('me/a', [
+          finding({ repo: 'me/a', advisoryId: 'GHSA-old', severity: 'critical' }),
+          finding({ repo: 'me/a', advisoryId: 'MAL-1', severity: 'low', malware: true }),
+          finding({ repo: 'me/a', advisoryId: 'MAL-2', severity: 'low', malware: true }),
+        ]),
+      ]),
+      repos: {},
+      settings: settings(),
+      mutes: [{ advisoryId: 'MAL-2', repo: null, by: 'u', at: NOW }],
+      now: NOW,
+    })
+    expect(plan.alerts.map((g) => g.advisoryId)).toEqual(['MAL-1'])
+    expect(plan.baselined[0].findings).toHaveLength(3)
+  })
+
+  it('an ecosystem whose source was down at the first read is baselined later, not flooded', () => {
+    const py = (id: string) => finding({ repo: 'me/a', advisoryId: id, ecosystem: 'PyPI', severity: 'critical' })
+    const one = planScan({ scan: scanOf([okRepo('me/a', [])], { npm: true, PyPI: false }), repos: {}, settings: settings(), mutes: [], now: NOW })
+    expect(one.nextRepos['me/a'].baselined).toEqual({ npm: true })
+
+    const two = planScan({ scan: scanOf([okRepo('me/a', [py('PY-old')])]), repos: one.nextRepos, settings: settings(), mutes: [], now: NOW })
+    expect(two.alerts).toEqual([])
+    expect(two.baselined).toEqual([{ repo: 'me/a', findings: [expect.objectContaining({ advisoryId: 'PY-old' })] }])
+    expect(two.nextRepos['me/a'].baselined).toEqual({ npm: true, PyPI: true })
+
+    const three = planScan({
+      scan: scanOf([okRepo('me/a', [py('PY-old'), py('PY-new')])]),
+      repos: two.nextRepos,
+      settings: settings(),
+      mutes: [],
+      now: NOW,
+    })
+    expect(three.alerts.map((g) => g.advisoryId)).toEqual(['PY-new'])
+    expect(three.baselined).toEqual([])
   })
 })
 
@@ -91,6 +130,23 @@ describe('new advisories', () => {
     })
     expect(plan.alerts.map((g) => g.advisoryId)).toEqual(['GHSA-evil'])
     expect(plan.nextRepos['me/a'].findings['GHSA-1:pkg']).toBeDefined()
+  })
+
+  it('a mute by CVE covers the advisory that carries it', () => {
+    const repos = baselined(['me/a', []])
+    const plan = planScan({
+      scan: scanOf([
+        okRepo('me/a', [
+          finding({ repo: 'me/a', advisoryId: 'GHSA-1', cveId: 'CVE-2026-1111' }),
+          finding({ repo: 'me/a', advisoryId: 'GHSA-2', cveId: 'CVE-2026-2222' }),
+        ]),
+      ]),
+      repos,
+      settings: settings(),
+      mutes: [{ advisoryId: 'CVE-2026-1111', repo: null, by: 'u', at: NOW }],
+      now: NOW,
+    })
+    expect(plan.alerts.map((g) => g.advisoryId)).toEqual(['GHSA-2'])
   })
 
   it('one card per advisory across repos, ordered malware, severity, reach', () => {
@@ -173,11 +229,67 @@ describe('fixed, unreadable and failed sources', () => {
     expect(Object.keys(plan.nextRepos['me/a'].findings).sort()).toEqual(['GHSA-npm:pkg', 'GHSA-py:pkg'])
   })
 
-  it('a repo no longer scanned is dropped and reported', () => {
+  it('a finding in a lockfile that was skipped this scan is kept, not fixed', () => {
+    const repos = baselined(['me/a', [finding({ repo: 'me/a', advisoryId: 'GHSA-1' })]])
+    const skipped = { ...okRepo('me/a', []), lockfiles: [], skipped: [{ path: 'package-lock.json', reason: 'too big' }] }
+    const plan = planScan({ scan: scanOf([skipped]), repos, settings: settings(), mutes: [], now: NOW })
+    expect(plan.fixed).toEqual([])
+    expect(plan.nextRepos['me/a'].findings['GHSA-1:pkg']).toBeDefined()
+  })
+
+  it('a finding is kept, not fixed, when the repo tree came back truncated', () => {
+    const repos = baselined(['me/a', [finding({ repo: 'me/a', advisoryId: 'GHSA-1' })]])
+    const plan = planScan({ scan: scanOf([{ ...okRepo('me/a', []), treeTruncated: true }]), repos, settings: settings(), mutes: [], now: NOW })
+    expect(plan.fixed).toEqual([])
+    expect(plan.nextRepos['me/a'].findings['GHSA-1:pkg']).toBeDefined()
+  })
+
+  it('a repo no longer scanned is reported once, kept for a while, then forgotten', () => {
+    const repos = baselined(['me/a', []], ['me/gone', [finding({ repo: 'me/gone', advisoryId: 'GHSA-1', severity: 'critical' })]])
+    const one = planScan({ scan: scanOf([okRepo('me/a', [])]), repos, settings: settings(), mutes: [], now: NOW })
+    expect(one.dropped).toEqual(['me/gone'])
+    expect(one.fixed).toEqual([])
+    expect(one.nextRepos['me/gone']).toMatchObject({ droppedAt: NOW })
+    expect(countOpen(one.nextRepos).critical).toBe(0)
+    expect(activeRepos(one.nextRepos).map((r) => r.name)).toEqual(['me/a'])
+
+    const two = planScan({ scan: scanOf([okRepo('me/a', [])]), repos: one.nextRepos, settings: settings(), mutes: [], now: '2026-10-20T00:00:00.000Z' })
+    expect(two.dropped).toEqual([])
+    expect(two.nextRepos['me/gone']).toMatchObject({ droppedAt: NOW })
+
+    const later = new Date(Date.parse(NOW) + DROPPED_TTL_MS + 1000).toISOString()
+    const three = planScan({ scan: scanOf([okRepo('me/a', [])]), repos: two.nextRepos, settings: settings(), mutes: [], now: later })
+    expect(three.nextRepos['me/gone']).toBeUndefined()
+  })
+
+  it('a dropped repo that comes back alerts new advisories instead of baselining again', () => {
     const repos = baselined(['me/a', []], ['me/gone', []])
-    const plan = planScan({ scan: scanOf([okRepo('me/a', [])]), repos, settings: settings(), mutes: [], now: NOW })
-    expect(plan.dropped).toEqual(['me/gone'])
-    expect(plan.nextRepos['me/gone']).toBeUndefined()
+    const one = planScan({ scan: scanOf([okRepo('me/a', [])]), repos, settings: settings(), mutes: [], now: NOW })
+    const back = planScan({
+      scan: scanOf([okRepo('me/a', []), okRepo('me/gone', [finding({ repo: 'me/gone', advisoryId: 'GHSA-new' })])]),
+      repos: one.nextRepos,
+      settings: settings(),
+      mutes: [],
+      now: NOW,
+    })
+    expect(back.alerts.map((g) => g.advisoryId)).toEqual(['GHSA-new'])
+    expect(back.baselined).toEqual([])
+    expect(back.nextRepos['me/gone'].droppedAt).toBeUndefined()
+  })
+
+  it('a dropped repo that comes back but is not reached keeps what it had', () => {
+    const repos = baselined(['me/gone', [finding({ repo: 'me/gone', advisoryId: 'GHSA-1' })]])
+    const one = planScan({ scan: scanOf([]), repos, settings: settings(), mutes: [], now: NOW })
+    expect(one.nextRepos['me/gone'].droppedAt).toBe(NOW)
+    const two = planScan({
+      scan: scanOf([{ repo: 'me/gone', status: 'not-reached', lockfiles: [], skipped: [], treeTruncated: false, findings: [] }]),
+      repos: one.nextRepos,
+      settings: settings(),
+      mutes: [],
+      now: NOW,
+    })
+    expect(two.nextRepos['me/gone'].droppedAt).toBeUndefined()
+    expect(two.nextRepos['me/gone'].findings['GHSA-1:pkg']).toBeDefined()
   })
 })
 

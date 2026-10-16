@@ -165,6 +165,24 @@ export function isMuted(mutes: Mute[], advisoryId: string, repo: string, cveId: 
   return mutes.some((m) => ids.has(m.advisoryId.toLowerCase()) && (m.repo === null || repoKey(m.repo) === r))
 }
 
+function normalizeRepo(raw: any): RepoState | null {
+  if (!raw || typeof raw !== 'object' || typeof raw.name !== 'string') return null
+  // Older files kept one flag for both ecosystems.
+  const b = raw.baselined
+  const baselined: RepoState['baselined'] = {}
+  if (b === true || b?.npm === true) baselined.npm = true
+  if (b === true || b?.PyPI === true) baselined.PyPI = true
+  return {
+    ...raw,
+    baselined,
+    findings: raw.findings && typeof raw.findings === 'object' ? raw.findings : {},
+    unreadableRuns: Number(raw.unreadableRuns) || 0,
+    unreadableNotified: raw.unreadableNotified === true,
+    lockfiles: Number(raw.lockfiles) || 0,
+    skipped: Array.isArray(raw.skipped) ? raw.skipped : [],
+  }
+}
+
 /**
  * Bring a loaded document up to the current shape: missing fields get their
  * defaults, so an older file (or a hand edit) never crashes the bot.
@@ -175,11 +193,18 @@ export function normalizeState(raw: any, intervalMinutes: number): State {
   const settings = { ...base.settings, ...(raw.settings && typeof raw.settings === 'object' ? raw.settings : {}) }
   if (!Array.isArray(settings.repos)) settings.repos = []
   if (!Array.isArray(settings.exclude)) settings.exclude = []
+  const repos: Record<string, RepoState> = {}
+  if (raw.repos && typeof raw.repos === 'object') {
+    for (const [k, r] of Object.entries(raw.repos)) {
+      const repo = normalizeRepo(r)
+      if (repo) repos[k] = repo
+    }
+  }
   return {
     version: STATE_VERSION,
     setup: raw.setup && typeof raw.setup === 'object' ? raw.setup : null,
     settings,
-    repos: raw.repos && typeof raw.repos === 'object' ? raw.repos : {},
+    repos,
     cards: raw.cards && typeof raw.cards === 'object' ? raw.cards : {},
     mutes: Array.isArray(raw.mutes) ? raw.mutes : [],
     lastRun: raw.lastRun && typeof raw.lastRun === 'object' ? raw.lastRun : null,

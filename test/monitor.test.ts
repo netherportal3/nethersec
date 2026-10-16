@@ -89,7 +89,7 @@ describe('Monitor', () => {
     sources.set({ lodash: [LODASH] })
     await monitor.run()
     expect(titles(discord.sent)).toEqual(['status: Now watching', 'status: CVE Monitor'])
-    expect(store.state.repos['me/app'].baselined).toBe(true)
+    expect(store.state.repos['me/app'].baselined).toEqual({ npm: true, PyPI: true })
 
     discord.sent.length = 0
     sources.set({ lodash: [LODASH], minimist: [MINIMIST] })

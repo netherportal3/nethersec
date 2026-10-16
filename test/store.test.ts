@@ -38,6 +38,15 @@ describe('Store', () => {
     expect(s.settings.intervalMinutes).toBe(30)
     expect(s.mutes).toEqual([])
   })
+
+  it('moves an older one-flag baseline to per-ecosystem flags, and drops broken repo entries', () => {
+    const repo = (baselined: unknown) => ({ name: 'me/a', baselined, findings: {}, unreadableRuns: 0, unreadableNotified: false, lockfiles: 1, skipped: [] })
+    const s = normalizeState({ repos: { 'me/a': repo(true), 'me/b': { ...repo(false), name: 'me/b' }, 'me/c': { ...repo({ npm: true }), name: 'me/c' }, bad: 'x' } }, 60)
+    expect(s.repos['me/a'].baselined).toEqual({ npm: true, PyPI: true })
+    expect(s.repos['me/b'].baselined).toEqual({})
+    expect(s.repos['me/c'].baselined).toEqual({ npm: true })
+    expect(s.repos.bad).toBeUndefined()
+  })
 })
 
 describe('loadConfig', () => {

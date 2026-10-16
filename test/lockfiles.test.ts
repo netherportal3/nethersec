@@ -495,6 +495,27 @@ describe('hostile or broken input stays cheap', () => {
     expect(ms(() => parsePnpmLock(head + 'lockfileVersion:' + ' '.repeat(N) + LF))).toBeLessThan(500)
   })
 
+  it('bun.lock: very deep or very long package keys keep the dependency walk cheap', () => {
+    const lock = (packages: Record<string, unknown>) =>
+      JSON.stringify({ lockfileVersion: 1, workspaces: { '': { name: 'app', dependencies: { lodash: '^4' } } }, packages })
+    const entry = (deps: Record<string, string>) => ['lodash@4.17.20', '', { dependencies: deps }, 'sha512-FIXTURE']
+
+    // Thousands of levels deep, each with a dependency only the root has.
+    const deep: Record<string, unknown> = { lodash: entry({}) }
+    for (let i = 0; i < 20; i++) deep[Array.from({ length: 3000 }, (_, j) => `d${i}x${j}`).join('/')] = entry({ lodash: '^4' })
+    // Just under the depth cap, but with long names.
+    const seg = 'a'.repeat(1000)
+    const wide: Record<string, unknown> = { lodash: entry({}) }
+    for (let i = 0; i < 100; i++) wide[[...Array.from({ length: 31 }, () => seg), `p${i}`].join('/')] = entry({ lodash: '^4' })
+
+    for (const text of [lock(deep), lock(wide)]) {
+      let pkgs: InstalledPackage[] = []
+      expect(ms(() => (pkgs = parseLockfile('bun.lock', 'bun', text).packages))).toBeLessThan(500)
+      // The packages are still listed; only dev vs runtime is unknown.
+      expect(find(pkgs, 'lodash')).toEqual([{ name: 'lodash', version: '4.17.20', dev: null }])
+    }
+  })
+
   it('a CR-only file is read line by line, not as one line', () => {
     const { packages, unpinned } = parseRequirements(['flask==2.0.0', 'requests==2.30.0', 'gunicorn>=20', ''].join(CR))
     expect(packages.map((p) => `${p.name}@${p.version}`)).toEqual(['flask@2.0.0', 'requests@2.30.0'])
