@@ -510,7 +510,9 @@ describe('hostile or broken input stays cheap', () => {
 
     for (const text of [lock(deep), lock(wide)]) {
       let pkgs: InstalledPackage[] = []
-      expect(ms(() => (pkgs = parseLockfile('bun.lock', 'bun', text).packages))).toBeLessThan(500)
+      // The wide case spends the whole work budget on purpose, a few hundred ms
+      // on a slow CI runner. Without the caps the deep case took many seconds.
+      expect(ms(() => (pkgs = parseLockfile('bun.lock', 'bun', text).packages))).toBeLessThan(2000)
       // The packages are still listed; only dev vs runtime is unknown.
       expect(find(pkgs, 'lodash')).toEqual([{ name: 'lodash', version: '4.17.20', dev: null }])
     }

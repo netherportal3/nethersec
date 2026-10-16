@@ -10,6 +10,10 @@ updates:
     groups:
       dev-tools:
         dependency-type: development
+    ignore:
+      # Node's types follow the oldest Node the bot supports (22), so code cannot use a newer API by mistake.
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
   - package-ecosystem: github-actions
     directory: /
     schedule:
