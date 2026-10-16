@@ -1,0 +1,10 @@
+services:
+  cve-monitor:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - cve-data:/data
+
+volumes:
+  cve-data:
