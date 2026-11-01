@@ -1,0 +1,35 @@
+# Installed to /etc/systemd/system/nethersec-apply-aged.service by install.sh --with-applier.
+[Unit]
+Description=nethersec release-age package applier (aged-in and fast-path upgrades)
+Documentation=https://github.com/netherportal3/nethersec/blob/main/docs/host/applier.md
+# apt-daily-upgrade.service (unattended-upgrades) STARTS this unit from its own
+# ExecStartPre and waits for it (apt-daily-upgrade.nethersec.conf). So this unit must
+# NEVER get After=/Requires=/Wants=/Requisite=/BindsTo=/PartOf= on
+# apt-daily-upgrade.service: After= would deadlock (each start waiting on the other,
+# with no start timeout on the oneshot u-u unit). The others would drag u-u into every
+# hourly run. The applier harness fails if one appears.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# oneshot is load-bearing: `systemctl start` (from the timer AND from the u-u drop-in)
+# only returns once the run has FINISHED, which is what orders it before u-u.
+Type=oneshot
+# report.env carries HOSTSEC_SOURCE + the report transport (shared with the
+# detector); apply.env carries the HOSTSEC_APPLY_* tuning. Both optional ('-') so a
+# box that is not set up yet logs and exits 0 rather than failing the unit.
+EnvironmentFile=-/etc/nethersec/report.env
+EnvironmentFile=-/etc/nethersec/apply.env
+# Run through /bin/sh so the execute bit does not matter.
+ExecStart=/bin/sh /opt/nethersec/apply-aged-upgrades.sh
+Nice=10
+IOSchedulingClass=idle
+# A kernel or libc install can run for MINUTES. This unit must NOT be SIGKILLed
+# mid-dpkg (that is exactly the broken-dpkg state the script refuses to run on), so
+# the timeout is generous, far longer than the detector's 120s read-only budget.
+# The u-u drop-in's wait (360 polls x 5s) covers exactly this; the applier harness
+# fails if the two drift apart.
+TimeoutStartSec=1800
+# Deliberately NOT sandboxed (NoNewPrivileges/ProtectSystem/PrivateTmp): this unit
+# installs packages, so dpkg maintainer scripts must run unrestricted (same posture
+# as unattended-upgrades). The script's own guards are the safety layer.

@@ -1,0 +1,15 @@
+{
+  "name": "nethersec",
+  "description": "nethersec: self-hosted security monitoring for your servers, PCs and repos, with agent skills to set it up and respond to what it finds.",
+  "owner": {
+    "name": "netherportal3",
+    "url": "https://github.com/netherportal3"
+  },
+  "plugins": [
+    {
+      "name": "nethersec",
+      "source": "./",
+      "description": "Skills to set up a nethersec hub, add servers and PCs, triage its alerts, respond to a new advisory, sweep a dependency fix across repos, and arm the applier and flood blocking after a dry run."
+    }
+  ]
+}

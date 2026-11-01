@@ -1,0 +1,4 @@
+# Python bytecode from running the helpers or their tests locally. The helpers run on
+# a box as `python3 <file>`, which never writes these.
+__pycache__/
+*.pyc

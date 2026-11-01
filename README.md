@@ -1,224 +1,129 @@
-# Discord CVE Monitor
+# nethersec
 
-A self-hosted Discord bot that watches your GitHub repos for dependencies with known
-vulnerabilities, and posts an alert when a new one shows up. It creates its own channels and a
-role to ping, keeps a live status board, and tells you which version fixes each problem.
+[![hub](https://github.com/netherportal3/nethersec/actions/workflows/hub.yml/badge.svg)](https://github.com/netherportal3/nethersec/actions/workflows/hub.yml)
+[![Host scripts](https://github.com/netherportal3/nethersec/actions/workflows/host.yml/badge.svg)](https://github.com/netherportal3/nethersec/actions/workflows/host.yml)
+[![PC scanner](https://github.com/netherportal3/nethersec/actions/workflows/pc.yml/badge.svg)](https://github.com/netherportal3/nethersec/actions/workflows/pc.yml)
 
-It reads your lockfiles directly, so it works on any repo your GitHub token can read, including
-repos where you are only a collaborator and cannot turn on Dependabot.
+Self-hosted security monitoring for a few Linux servers, a Windows PC and your GitHub repos. It
+alerts you in Discord when something needs you and stays quiet the rest of the time.
 
-## What it does
+It is built for one person or a small team looking after a handful of machines. It ships with
+agent skills, so a coding agent can set it up and help you act on what it finds.
 
-- Reads the lockfiles on each repo's default branch: npm, pnpm, Yarn, Bun, pip, uv and Poetry.
-- Checks every installed package against the GitHub advisory database (through npm's advisory
-  endpoint) and [OSV](https://osv.dev) for Python.
-- Posts one alert card per new advisory, listing every affected repo, the installed version and
-  the version that fixes it. Critical advisories and malware ping a role.
-- Marks a card as fixed once the advisory is gone from every repo, and says so in the status
-  channel.
-- Keeps a status board up to date after every scan: what is open, what could not be read, and
-  when the next scan runs.
+> **0.1.0 is the first release.** So far it has run only in tests, CI and a test install in a
+> container. Each part's doc says what is tested and what is not.
 
-### Built to stay quiet
+## What it watches
 
-- **No flood on day one.** The first scan of a repo records what is already open and posts one
-  summary. Only advisories that appear after that get their own alert. Malware is the exception:
-  it always gets its own alert.
-- **One card per advisory.** The same advisory in 12 repos is one card and at most one ping.
-- **At most 10 cards per scan.** Anything past that is listed in one summary message, never dropped.
-- **No false all-clear.** Nothing is marked fixed unless it was checked:
-  - A repo that cannot be read keeps what was open there, and is reported after two scans in a row.
-  - A lockfile that is too big or cannot be parsed, or a repo too big to list in full, keeps what
-    was open in it.
-  - If an advisory source is down, nothing in that ecosystem is marked fixed until it is back. If
-    it was down during a repo's first scan, the next scan records that backlog quietly instead of
-    alerting on all of it.
-- **Repos that come back still alert.** A repo that drops off the watch list is remembered for 30
-  days, so if it returns, its new advisories get alerts instead of being recorded quietly again.
-- **Acknowledge and mute** buttons on every card. Mute by advisory ID or by CVE. Dev-only findings
-  do not ping unless you ask.
-- **Safe restarts.** On shutdown the bot waits up to 45 seconds for a running scan to finish
-  posting and saving, so a restart does not post the same alerts twice.
+| Where | What you hear about |
+|---|---|
+| GitHub repos | A dependency that gets a known vulnerability or turns out to be malware. It reads npm, pnpm, Yarn, Bun, pip, uv and Poetry lockfiles. |
+| Ubuntu servers | High or Critical security fixes stuck uninstalled, reboots a fix is waiting on, SSH accepting passwords, unexpected open ports, Livepatch off, bursts of SSH login attempts or log errors. |
+| Containers | Fixable critical or high CVEs in the OS packages of running images. |
+| Upstream | New advisories and CISA known-exploited entries for software you list, and critical network-reachable kernel bugs Ubuntu has not fixed yet. |
+| Windows PC | Missing security updates, Defender or the firewall off, apps that are behind or end of life, outdated Node, Go or Java, WSL distros behind on updates, known-exploited bugs in installed software. |
+| Server traffic | Connection, packet, HTTP and SMTP floods. |
 
-## Supported lockfiles
+## What it changes
 
-| Ecosystem | Files |
-| --- | --- |
-| npm | `package-lock.json`, `npm-shrinkwrap.json` (v1, v2, v3) |
-| pnpm | `pnpm-lock.yaml` (v5, v6, v9) |
-| Yarn | `yarn.lock` (classic and Berry) |
-| Bun | `bun.lock` (the text format) |
-| Python | `requirements*.txt` and `requirements/*.txt` (exact `==` pins), `uv.lock`, `poetry.lock` |
+Out of the box it only watches. Three parts can change a machine, and each starts off or in
+dry-run:
 
-Not supported yet: `bun.lockb`, `Pipfile.lock`, `pdm.lock`, and other ecosystems (Go, Rust, Java,
-Ruby...). Unsupported lockfiles are listed as skipped, never treated as clean. In a
-`requirements.txt`, a line that is not an exact pin (`flask>=2`) cannot be checked, so pin your
-full dependency set (`pip freeze`) to get coverage.
+- The [update applier](docs/host/applier.md) installs ordinary Ubuntu updates once they are a few
+  days old, so a bad release has time to be pulled first. Security updates stay on Ubuntu's own
+  fast path. In dry-run it already holds updates back while they age, but installs nothing.
+- [Flood blocking](docs/host/flood.md) drops the main source of a flood for a while. In dry-run it
+  only names the address it would drop.
+- The [mitigation scripts](docs/host/mitigations.md) block a kernel bug's trigger before a fix
+  exists. They do nothing until you run one.
 
-## Setup
+Adding the applier also installs `python3-apt` if it is missing, runs the applier just before
+unattended-upgrades, and turns on Docker live-restore where Docker is installed.
 
-You need a machine that stays on (a small VPS, a home server, a Raspberry Pi), and either
-Node.js 22.9 or newer, or Docker.
+## How it behaves
 
-### 1. Create the Discord bot
+- A check that cannot read something says so. It never reports "fixed" after a failed read.
+- You hear about a problem when it starts and when it ends, with a slow reminder in between.
+- It pages only when a person is needed now. Routine patching pages nobody.
+- A server can say a problem looks fixed, but only a person closes the alert.
+- Anything that can change a machine ships switched off.
 
-1. Open the [Discord Developer Portal](https://discord.com/developers/applications) and click
-   **New Application**.
-2. On the **Bot** page, click **Reset Token** and copy the token. This is your `DISCORD_TOKEN`.
-3. Still on the **Bot** page, turn off **Public Bot** so only you can add it to a server. No
-   privileged intents are needed.
-4. Copy the **Application ID** from the **General Information** page. You need it for the invite
-   link below.
+The reasoning is in [docs/principles.md](docs/principles.md).
 
-### 2. Create a GitHub token
-
-The bot only reads. Pick one:
-
-- **Fine-grained token** (recommended): GitHub > Settings > Developer settings > Fine-grained
-  tokens. Choose the repos (or all repos) of one owner, and give it **Contents: Read-only**.
-  Fine-grained tokens cannot reach repos owned by someone else where you are only a collaborator.
-- **Classic token** with the `repo` scope: covers every repo you can read, including repos you
-  collaborate on and repos in your organizations. It can also write, so keep it safe. With no
-  scope at all, a classic token only sees public repos.
-
-If an organization uses SAML single sign-on, authorize the token for it, or its repos stay hidden
-(the status board tells you when this happens).
-
-### 3. Configure
-
-```bash
-cp .env.example .env
-```
-
-Fill in `DISCORD_TOKEN`, `DISCORD_GUILD_ID` (right-click your server icon > Copy Server ID, with
-Developer Mode on in Discord's Advanced settings) and `GITHUB_TOKEN`.
-
-### 4. Run it
-
-With Docker:
-
-```bash
-docker compose up -d --build
-```
-
-The compose file gives the bot 60 seconds to stop, so a running scan can finish. With plain
-`docker run`, pass `--stop-timeout 60` for the same.
-
-Or with Node.js:
-
-```bash
-npm ci
-npm run build
-npm start
-```
-
-### 5. Invite it and run setup
-
-If the bot is not in your server yet, it prints an invite link when it starts. You can also build
-it yourself, with your Application ID:
+## How the parts connect
 
 ```
-https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&scope=bot+applications.commands&permissions=378225642576
+servers      host/ scripts ──┐
+Windows PC   pc/ scanner   ──┼── POST /v1/report ──>  hub/ ──> Discord channels and DMs
+your scripts               ──┘   (one key per box)     │
+                                                       ├── scans GitHub lockfiles
+                                                       ├── reads advisory feeds and OSV
+agents ── skills/ ── MCP server or GET /v1/state ──────┘   (read-only, own token)
 ```
 
-The permissions are View Channels, Send Messages, Embed Links and Read Message History for
-posting, plus Manage Channels, Manage Roles, Create Public Threads, Create Private Threads, Send
-Messages in Threads and Add Reactions for `/cve setup`. Discord only lets a bot set a channel
-permission it has itself, so setup needs the thread and reaction permissions to turn them off in
-the alert channels. The bot never starts threads or reacts.
+The hub is one Node process that keeps its state in a JSON file. Servers and the PC send it small
+reports over the [report protocol](docs/report-protocol.md). Each key belongs to one machine, and
+the hub stores only its hash. You can run the server scripts without a hub, posting to a Discord
+webhook, ntfy or any JSON endpoint, but then you get no alert cards, no Resolve button and no
+reboot or container data.
 
-Then, in your server, run:
+## Set it up
+
+1. Run the hub: a Discord bot you create, started with Docker Compose. See [docs/hub](docs/hub/README.md).
+2. Add a server: clone this repo on it and run `host/install.sh`. See [docs/host](docs/host/README.md).
+3. Add your Windows PC with `pc/install.ps1`. See [docs/pc](docs/pc/README.md).
+4. List the software you run in `watch.json`, so the hub watches its advisories. See
+   [docs/hub/watch.md](docs/hub/watch.md).
+
+## Set it up with an agent
+
+The [skills](skills/) cover setup, adding a server or PC, triaging an alert, responding to a new
+advisory, fixing one vulnerable dependency across many repos, and switching on the parts that
+change things. They ask before reboots, firewall or SSH changes, and before switching anything on.
+
+In Claude Code:
 
 ```
-/cve setup
+/plugin marketplace add netherportal3/nethersec
+/plugin install nethersec@nethersec
 ```
 
-It creates a **CVE Monitor** category with three read-only channels and a **CVE Watch** role:
+Then ask it to set up nethersec. Other agents that read [Agent Skills](https://agentskills.io) can
+use the `skills/` folder from a clone of this repo.
 
-| Channel | What goes there |
-| --- | --- |
-| `#cve-critical` | Critical advisories and malware. Pings the CVE Watch role. |
-| `#cve-alerts` | Other new advisories at your alert level (High and above by default). |
-| `#cve-status` | The status board, newly watched repos, fixes and problems. |
+nethersec is not a library, and nothing gets added to your codebase. Adding it to a project means
+running the hub, installing the scripts on your machines and giving your agents the skills. To give
+the skills to everyone who works in a repo, run this once in it and commit the
+`.claude/settings.json` it writes:
 
-The channels are private by default: only admins and members with the **CVE Watch** role can see
-them. Run `/cve setup private:False` to let everyone in the server read them. Nobody can post in
-them; members with the CVE Watch role can open a thread on an alert and react, to talk it over.
-The role is mentionable, so the bot can ping it without extra permissions. Running setup again
-recreates anything that was deleted.
-
-The first scan starts right away. By default the bot watches every repo the token can read,
-without forks and archived repos.
-
-## Commands
-
-All commands are admin-only (Manage Server) by default. A server admin can open them to other
-roles under Server Settings > Integrations.
-
-| Command | What it does |
-| --- | --- |
-| `/cve setup` | Create or repair the channels and the role. |
-| `/cve status` | The status board, just for you. |
-| `/cve scan` | Scan now. |
-| `/cve findings [repo] [severity]` | List what is open. |
-| `/cve repos list` | Show how repos are chosen and which are watched. |
-| `/cve repos add <repo>` | Watch a repo (also one the token's list does not include, like someone else's public repo). |
-| `/cve repos remove <repo>` | Stop watching a repo. |
-| `/cve repos mode <mode>` | Watch every repo the token can read, or only the ones you add. |
-| `/cve settings` | Alert level, pings, forks, archived repos and scan interval. |
-| `/cve mute <advisory> [repo]` | Stop alerts for an advisory (its GHSA or CVE ID), everywhere or in one repo. |
-| `/cve unmute <advisory> [repo]` | Turn them back on. |
-| `/cve mutes` | List muted advisories. |
-| `/cve pause` / `/cve resume` | Stop and restart scanning. |
-
-On an alert card, **Acknowledge** (admins and the CVE Watch role) records who is handling it, and
-**Mute advisory** (admins) stops alerts for that advisory in every repo.
-
-## Configuration
-
-| Variable | Required | What it is |
-| --- | --- | --- |
-| `DISCORD_TOKEN` | yes | The bot token. |
-| `DISCORD_GUILD_ID` | yes | The one server the bot serves. It leaves any other server. |
-| `GITHUB_TOKEN` | yes | A token that can read your repos. |
-| `SCAN_INTERVAL_MINUTES` | no | Minutes between scans for a new install, 15 to 1440 (default 60). Change it later with `/cve settings`. |
-| `DATA_DIR` | no | Where the state file lives (default `./data`, `/data` in Docker). |
-
-Everything else is set from Discord and saved in `DATA_DIR/state.json`. Back that folder up if you
-care about your settings; the previous copy is kept as `state.json.bak`.
-
-## Privacy and security
-
-- The bot downloads lockfiles only, never your source code.
-- The GitHub token is sent only to `api.github.com`, on read requests. It is never logged or posted.
-- To look up advisories, the names and versions of your dependencies (not your repo names) are sent
-  to `registry.npmjs.org` and `api.osv.dev`. If that is not acceptable for your project, do not run it.
-- Alerts reveal which of your repos are vulnerable to what. Keep the channels private unless the
-  whole server should see them.
-
-See [SECURITY.md](SECURITY.md) to report a problem.
-
-## Rate limits
-
-A scan costs about one GitHub request per repo, plus one per changed lockfile. Repos whose default
-branch has not moved since the last scan answer from cache and do not count against GitHub's rate
-limit. If the limit runs low, the remaining repos wait for the next scan and keep what they had.
-
-The repo list is read up to 2000 repos. If the token can read more, the status board says so;
-switch to `/cve repos mode` "Only repos I add" and add the ones you want.
-
-## Development
-
-```bash
-npm ci
-npm run typecheck
-npm test
+```
+claude plugin marketplace add netherportal3/nethersec --scope project
+claude plugin install nethersec@nethersec --scope project
 ```
 
-Lockfile parsing, advisory matching, fix versions and the alert rules are pure functions with
-tests in `test/`. Test inputs are written inline on purpose: a test file named like a real
-lockfile would get picked up by GitHub's dependency graph, and by this bot.
+Agents can also read the hub's state through a read-only [MCP server](docs/hub/mcp.md) or
+[`GET /v1/state`](docs/hub/api.md), each with its own token, and check a server with
+`host/nethersec-status.sh --json`.
+
+## Requirements
+
+- Hub: Docker or Node 22.9+, and a Discord server you can add a bot to. A GitHub token only if you
+  want repo scanning.
+- Servers: Ubuntu with systemd, curl and python3. CI tests the scripts on GitHub's Ubuntu runner
+  with apt, systemd and the network mocked. Other distributions are untested.
+- PC: Windows 10 or 11 with Node 22+.
+
+## Coming from discord-cve-monitor
+
+The hub is discord-cve-monitor with more added. Your data folder loads as it is and keeps its
+channels and role, and the commands move from `/cve` to `/nethersec`. See
+[Migrating from discord-cve-monitor 1.x](docs/hub/README.md#migrating-from-discord-cve-monitor-1x).
+
+## Contributing and security
+
+[AGENTS.md](AGENTS.md) covers the layout, the tests and the rules a change has to keep. Report a
+vulnerability privately as [SECURITY.md](SECURITY.md) describes, not in a public issue.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+[MIT](LICENSE)

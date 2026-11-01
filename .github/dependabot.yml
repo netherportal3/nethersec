@@ -1,7 +1,7 @@
 version: 2
 updates:
   - package-ecosystem: npm
-    directory: /
+    directory: /hub
     schedule:
       interval: weekly
     # Wait a week before proposing a new release, so a hijacked version has time to be caught.
@@ -11,7 +11,7 @@ updates:
       dev-tools:
         dependency-type: development
     ignore:
-      # Node's types follow the oldest Node the bot supports (22), so code cannot use a newer API by mistake.
+      # Node's types follow the oldest Node the hub supports (22), so code cannot use a newer API by mistake.
       - dependency-name: '@types/node'
         update-types: ['version-update:semver-major']
   - package-ecosystem: github-actions
@@ -21,7 +21,7 @@ updates:
     cooldown:
       default-days: 7
   - package-ecosystem: docker
-    directory: /
+    directory: /hub
     schedule:
       interval: weekly
     cooldown:

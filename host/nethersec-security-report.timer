@@ -1,0 +1,17 @@
+# Schedule for security-report.sh. Installed verbatim to
+# /etc/systemd/system/nethersec-security-report.timer by install.sh.
+[Unit]
+Description=Schedule the nethersec host security report
+
+[Timer]
+# First run 5 min after boot, then every 30 min after each completion.
+OnBootSec=5min
+OnUnitActiveSec=30min
+# Spread runs so many boxes do not hit the hub in the same second.
+RandomizedDelaySec=180
+# Catch up one missed run if the box was off at the scheduled time.
+Persistent=true
+Unit=nethersec-security-report.service
+
+[Install]
+WantedBy=timers.target

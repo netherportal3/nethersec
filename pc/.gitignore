@@ -1,0 +1,10 @@
+# Your own config, encrypted key or webhook URL, watch list and state never go in git.
+config.json
+secret.dpapi
+watch.json
+state.json
+state.json.bad-*
+last-run.json
+disabled
+cache/
+*.tmp

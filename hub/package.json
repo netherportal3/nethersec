@@ -1,0 +1,29 @@
+{
+  "name": "nethersec-hub",
+  "version": "0.1.0",
+  "description": "The nethersec hub: a self-hosted Discord bot that takes reports from your servers and PCs, watches your GitHub repos for vulnerable dependencies, and keeps the alert cards.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.9"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node --env-file-if-exists=.env dist/index.js",
+    "key": "node --env-file-if-exists=.env dist/cli.js key",
+    "mcp": "node mcp/nethersec-mcp.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "discord.js": "^14.27.0",
+    "semver": "^7.8.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/semver": "^7.7.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  }
+}

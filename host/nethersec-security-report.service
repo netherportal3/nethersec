@@ -1,0 +1,28 @@
+# Installed to /etc/systemd/system/nethersec-security-report.service by install.sh.
+[Unit]
+Description=nethersec host security report (pending CVE fixes, pending reboots, SSH bursts, box drift)
+Documentation=https://github.com/netherportal3/nethersec/blob/main/docs/host/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# This box's name, the tuning and the report transport (URL, format, key) live here,
+# mode 600. The leading '-' makes it optional, so a box that is not set up yet logs and
+# exits 0 rather than failing the unit.
+EnvironmentFile=-/etc/nethersec/report.env
+# Also read the applier's tuning (no secrets) so the backstop's ceiling
+# (HOSTSEC_APPLY_CEILING_DAYS) matches the applier's. Optional ('-').
+EnvironmentFile=-/etc/nethersec/apply.env
+# Run through /bin/sh so the execute bit does not matter. The script is READ-ONLY on
+# the system and always exits 0.
+ExecStart=/bin/sh /opt/nethersec/security-report.sh
+# A background monitor, not latency-sensitive.
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=120
+# Modest hardening. Not ProtectSystem=strict or PrivateNetwork: the script reads the
+# apt cache and the journal as root, and posts over the network.
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes

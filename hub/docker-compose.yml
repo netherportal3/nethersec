@@ -1,0 +1,19 @@
+services:
+  hub:
+    build: .
+    image: nethersec-hub
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Every interface inside the container. The port below is published on the
+      # host's loopback only: put a reverse proxy or a private network in front.
+      NETHERSEC_LISTEN: 0.0.0.0:8787
+    ports:
+      - "127.0.0.1:8787:8787"
+    # Room for a running scan to finish posting and save before the container stops.
+    stop_grace_period: 60s
+    volumes:
+      - hub-data:/data
+
+volumes:
+  hub-data:

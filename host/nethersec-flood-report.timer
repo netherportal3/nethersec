@@ -1,0 +1,22 @@
+# Schedule for flood-report.sh. Installed verbatim to
+# /etc/systemd/system/nethersec-flood-report.timer by install.sh --with-flood.
+#
+# A live flood cannot wait for the 30-min host-security cadence, so this runs about
+# once a minute. The detector is transition-only (raise once, resolve once) + posts
+# under a per-run cap, and the hub rate-limits per source, so a fast tick
+# does NOT spam the alert channels.
+[Unit]
+Description=Schedule the nethersec flood detector
+
+[Timer]
+# First run 2 min after boot (let docker + the network settle), then every minute.
+OnBootSec=2min
+OnUnitActiveSec=60s
+# A small spread so many boxes do not hit the hub in the same second.
+RandomizedDelaySec=15
+# A flood is a NOW signal; do not stack up catch-up runs for missed ticks.
+Persistent=false
+Unit=nethersec-flood-report.service
+
+[Install]
+WantedBy=timers.target

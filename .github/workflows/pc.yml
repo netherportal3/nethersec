@@ -1,0 +1,62 @@
+name: PC scanner
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pc/**'
+      - '.github/workflows/pc.yml'
+  pull_request:
+    paths:
+      - 'pc/**'
+      - '.github/workflows/pc.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # The tests mock every Windows command, so Linux runs them.
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+      - run: node --test "pc/test/*.test.mjs"
+
+  powershell:
+    # A parse check only: install.ps1 and the PowerShell the scanner runs are never executed here.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Parse install.ps1 and the scanner's embedded PowerShell
+        shell: pwsh
+        run: |
+          $failed = $false
+          function Test-Parse([string]$Name, [string]$Text) {
+            $tokens = $null; $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors) {
+              foreach ($e in $errors) { Write-Host "::error::$Name line $($e.Extent.StartLineNumber): $($e.Message)" }
+              return $false
+            }
+            Write-Host "$Name parses"
+            return $true
+          }
+          if (-not (Test-Parse 'install.ps1' (Get-Content -Raw -LiteralPath 'pc/install.ps1'))) { $failed = $true }
+          $src = Get-Content -Raw -LiteralPath 'pc/pc-security-run.mjs'
+          $prelude = [regex]::Match($src, 'const PS_PRELUDE = String\.raw`([\s\S]*?)`').Groups[1].Value
+          $blocks = [regex]::Matches($src, 'const (\w+_PS) = String\.raw`([\s\S]*?)`')
+          if (-not $prelude -or $blocks.Count -lt 2) { Write-Host '::error::embedded PowerShell not found in pc-security-run.mjs'; $failed = $true }
+          foreach ($b in $blocks) {
+            if (-not (Test-Parse $b.Groups[1].Value ($prelude + $b.Groups[2].Value))) { $failed = $true }
+          }
+          if ($failed) { exit 1 }

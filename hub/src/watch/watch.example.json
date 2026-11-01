@@ -1,0 +1,66 @@
+{
+  "_about": "Copy to <DATA_DIR>/watch.json and keep only what you run. Keys that start with _ are notes. See docs/hub/watch.md.",
+  "components": [
+    { "id": "kev", "name": "CISA KEV", "feed": { "kind": "kev" } },
+
+    { "id": "linux", "name": "Linux kernel", "runsOn": "Every server", "kev": [{ "vendor": "^Linux$", "product": "\\bkernel\\b" }] },
+    { "id": "openssh", "name": "OpenSSH", "runsOn": "Every server", "kev": [{ "product": "^OpenSSH\\b" }] },
+    { "id": "openssl", "name": "OpenSSL", "runsOn": "Every server and most container images", "kev": [{ "vendor": "^OpenSSL\\b" }] },
+    { "id": "glibc", "name": "glibc", "runsOn": "Every server", "kev": [{ "product": "\\bGNU C Library\\b|\\bglibc\\b" }] },
+    { "id": "sudo", "name": "sudo", "runsOn": "Every server", "kev": [{ "product": "^sudo$" }] },
+    { "id": "bash", "name": "Bash", "runsOn": "Every server", "kev": [{ "vendor": "^GNU$", "product": "\\bBash\\b" }] },
+
+    {
+      "id": "docker",
+      "name": "Docker Engine",
+      "runsOn": "Every Docker host",
+      "feed": { "kind": "github", "repo": "moby/moby" },
+      "kev": [{ "vendor": "^Docker\\b" }, { "product": "\\b(?:Docker|Moby)\\b" }]
+    },
+    {
+      "id": "containerd",
+      "name": "containerd",
+      "runsOn": "Every Docker host",
+      "feed": { "kind": "github", "repo": "containerd/containerd" },
+      "kev": [{ "product": "\\bcontainerd\\b" }]
+    },
+    {
+      "id": "runc",
+      "name": "runc",
+      "runsOn": "Every Docker host",
+      "feed": { "kind": "github", "repo": "opencontainers/runc" },
+      "kev": [{ "product": "\\brunc\\b" }]
+    },
+
+    { "id": "nginx", "name": "nginx", "runsOn": "web1, web2", "kev": [{ "product": "^nginx\\b" }] },
+    { "id": "apache-httpd", "name": "Apache HTTP Server", "runsOn": "web1", "kev": [{ "vendor": "^Apache$", "product": "\\bHTTP Server\\b" }] },
+    {
+      "id": "traefik",
+      "name": "Traefik",
+      "runsOn": "The reverse proxy container",
+      "feed": { "kind": "github", "repo": "traefik/traefik" },
+      "kev": [{ "product": "^Traefik\\b" }]
+    },
+    {
+      "id": "postgres",
+      "name": "PostgreSQL",
+      "runsOn": "db1",
+      "feed": {
+        "kind": "rss",
+        "url": "https://www.postgresql.org/news/pgsql.rss",
+        "match": "\\bPostgreSQL\\s+\\d+\\.\\d+\\b.*\\breleased\\b|\\bsecurity\\s+(?:release|update)s?\\b"
+      },
+      "kev": [{ "vendor": "^PostgreSQL\\b" }, { "product": "^PostgreSQL\\b" }]
+    },
+    {
+      "id": "redis",
+      "name": "Redis",
+      "runsOn": "db1",
+      "feed": { "kind": "github", "repo": "redis/redis" },
+      "kev": [{ "product": "\\bRedis\\b" }]
+    }
+  ],
+  "kernel": { "ubuntu": ["24.04"], "runsOn": "Every server (Ubuntu 24.04, generic kernel)" },
+  "containers": { "enabled": true },
+  "advisoryCards": { "closeAcknowledgedAfterDays": 90 }
+}

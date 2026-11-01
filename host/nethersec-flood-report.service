@@ -1,0 +1,25 @@
+# Installed to /etc/systemd/system/nethersec-flood-report.service by install.sh --with-flood.
+[Unit]
+Description=nethersec flood detector (conntrack/SYN, network volume, HTTP and SMTP floods)
+Documentation=https://github.com/netherportal3/nethersec/blob/main/docs/host/flood.md
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# The report transport and this box's name live in report.env (shared with the host
+# detector); the HOSTSEC_FLOOD_* tuning lives in flood.env. Both mode 600. The leading
+# '-' makes each optional, so a box that is not set up yet logs and exits 0.
+EnvironmentFile=-/etc/nethersec/report.env
+EnvironmentFile=-/etc/nethersec/flood.env
+# Run through /bin/sh so the execute bit does not matter. The script is read-only on
+# the system EXCEPT the off-by-default, self-expiring nft mitigation, which needs
+# CAP_NET_ADMIN, so this unit is deliberately not sandboxed away from it.
+ExecStart=/bin/sh /opt/nethersec/flood-report.sh
+# It runs every minute, so keep it cheap.
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=45
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes

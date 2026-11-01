@@ -1,0 +1,41 @@
+{
+  "apps": [
+    {
+      "idPattern": "^Google\\.Chrome(\\.EXE)?$",
+      "name": "Google Chrome",
+      "followsMajor": true,
+      "kev": [{ "vendorProject": "^Google$", "product": "^Chromium" }]
+    },
+    {
+      "id": "Microsoft.Edge",
+      "name": "Microsoft Edge",
+      "followsMajor": true,
+      "kev": [{ "vendorProject": "^Microsoft$", "product": "^Edge" }, { "vendorProject": "^Google$", "product": "^Chromium" }]
+    },
+    { "id": "Mozilla.Firefox", "name": "Firefox", "followsMajor": true, "kev": [{ "vendorProject": "^Mozilla$", "product": "Firefox" }] },
+    {
+      "idPattern": "^Adobe\\.Acrobat\\.Reader\\.(32|64)-bit$",
+      "name": "Adobe Acrobat Reader",
+      "followsMajor": true,
+      "kev": [{ "vendorProject": "^Adobe$", "product": "Acrobat|Reader" }]
+    },
+    { "id": "VideoLAN.VLC", "name": "VLC", "kev": [{ "vendorProject": "^VideoLAN$", "product": "VLC" }] },
+    { "id": "Notepad++.Notepad++", "name": "Notepad++", "kev": [{ "vendorProject": "^Notepad\\+\\+", "product": "Notepad\\+\\+" }] },
+    { "id": "Git.Git", "name": "Git", "kev": [{ "vendorProject": "^Git$", "product": "^Git" }] },
+    { "id": "Microsoft.VisualStudioCode", "name": "Visual Studio Code", "kev": [{ "vendorProject": "^Microsoft$", "product": "Visual Studio Code" }] },
+    { "id": "Microsoft.PowerShell", "name": "PowerShell 7", "kev": [{ "vendorProject": "^Microsoft$", "product": "PowerShell" }] },
+    { "id": "Docker.DockerDesktop", "name": "Docker Desktop", "kev": [{ "vendorProject": "^Docker$", "product": "Desktop" }] },
+    { "id": "Microsoft.WSL", "name": "WSL", "kev": [{ "vendorProject": "^Microsoft$", "product": "Subsystem for Linux" }] },
+    {
+      "id": "OpenJS.NodeJS.LTS",
+      "name": "Node.js",
+      "check": "runtimes",
+      "kev": [{ "vendorProject": "^(Node\\.?js|OpenJS)", "product": "Node" }]
+    },
+    { "id": "GoLang.Go", "name": "Go", "check": "runtimes", "lineParts": 2, "kev": [{ "vendorProject": "^(Go|Golang)$" }] },
+    { "idPattern": "^Python\\.Python\\.3\\.\\d+$", "name": "Python 3", "lineParts": 2, "kev": [{ "vendorProject": "^Python", "product": "^(C?Python)$" }] }
+  ],
+  "eol": [
+    { "idPattern": "^Python\\.Python\\.2(\\.\\d+)?$", "name": "Python 2", "note": "Its support ended in 2020. Uninstall it in Settings > Apps if nothing needs it." }
+  ]
+}

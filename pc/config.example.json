@@ -1,0 +1,18 @@
+{
+  "delivery": "hub",
+  "hubUrl": "",
+  "source": "pc",
+  "disabled": false,
+  "appGraceDays": 7,
+  "runtimeGraceDays": 7,
+  "windowsGraceDays": 7,
+  "defenderSignatureMaxDays": 3,
+  "reminderDays": 7,
+  "unreadableAlertDays": 2,
+  "maxPostsPerRun": 5,
+  "checkBudgetMinutes": 14,
+  "reportBudgetMinutes": 18,
+  "wsl": { "enabled": true, "startStopped": false, "skip": ["^docker-desktop"] },
+  "runtimes": { "node": true, "go": true, "java": true },
+  "kev": { "enabled": true }
+}

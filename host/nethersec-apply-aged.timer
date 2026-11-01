@@ -1,0 +1,17 @@
+# Schedule for apply-aged-upgrades.sh. Installed verbatim to
+# /etc/systemd/system/nethersec-apply-aged.timer by install.sh --with-applier.
+[Unit]
+Description=Schedule the nethersec release-age package applier
+
+[Timer]
+# First run 15 min after boot, then hourly. Hourly is fine; the soak is measured in
+# DAYS, so the applier only needs to notice "a package has aged in" within an hour.
+OnBootSec=15min
+OnUnitActiveSec=1h
+# Spread runs so many boxes do not hit apt mirrors or the hub in the same second.
+RandomizedDelaySec=300
+Persistent=true
+Unit=nethersec-apply-aged.service
+
+[Install]
+WantedBy=timers.target

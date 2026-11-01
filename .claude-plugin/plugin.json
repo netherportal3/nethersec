@@ -1,0 +1,12 @@
+{
+  "name": "nethersec",
+  "version": "0.1.0",
+  "description": "Agent skills for nethersec, an open-source security monitor: set up the hub, add servers and PCs, triage alerts, respond to advisories, sweep dependency fixes, and go live with the applier and flood blocking. The skills ask before reboots, firewall or SSH changes, and arming the applier or flood blocking.",
+  "author": {
+    "name": "netherportal3",
+    "url": "https://github.com/netherportal3"
+  },
+  "repository": "https://github.com/netherportal3/nethersec",
+  "license": "MIT",
+  "keywords": ["security", "monitoring", "cve", "patching", "incident-response", "discord", "skills"]
+}
