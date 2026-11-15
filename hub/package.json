@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "discord.js": "^14.27.0",
-    "semver": "^7.8.5"
+    "semver": "^7.8.6"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
